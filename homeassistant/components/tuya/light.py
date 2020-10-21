@@ -14,11 +14,16 @@ from homeassistant.const import CONF_PLATFORM
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import color as colorutil
 
+import homeassistant.util.dt as dt
+
+import logging
+
 from . import TuyaDevice
 from .const import DOMAIN, TUYA_DATA, TUYA_DISCOVERY_NEW
 
 PARALLEL_UPDATES = 0
 
+logger = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up tuya sensors dynamically through tuya discovery."""
@@ -30,10 +35,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         if not dev_ids:
             return
         entities = await hass.async_add_executor_job(
-            _setup_entities,
-            hass,
-            dev_ids,
-            platform,
+            _setup_entities, hass, dev_ids, platform,
         )
         async_add_entities(entities)
 
@@ -65,6 +67,9 @@ class TuyaLight(TuyaDevice, LightEntity):
         super().__init__(tuya, platform)
         self.entity_id = ENTITY_ID_FORMAT.format(tuya.object_id())
 
+        self._is_on = None
+        self._last_change_is_on = None
+
     @property
     def brightness(self):
         """Return the brightness of the light."""
@@ -88,7 +93,21 @@ class TuyaLight(TuyaDevice, LightEntity):
     @property
     def is_on(self):
         """Return true if light is on."""
-        return self._tuya.state()
+        if self._is_on is None:
+            return self._tuya.state()
+
+        now = dt.now()
+        duration = (now - self._last_change_is_on).total_seconds()
+        if duration > 30:
+            newState = self._tuya.state()
+            logger.debug(self.entity_id + "> clear cache, was: " + str(self._is_on) + " became: " + str(newState))
+
+            self._is_on = None
+            self._last_change_is_on = None
+
+            return newState
+
+        return self._is_on
 
     @property
     def min_mireds(self):
@@ -102,6 +121,10 @@ class TuyaLight(TuyaDevice, LightEntity):
 
     def turn_on(self, **kwargs):
         """Turn on or control the light."""
+        self._is_on = True
+        self._last_change_is_on = dt.now()
+        logger.debug(self.entity_id + "> turned on")
+
         if (
             ATTR_BRIGHTNESS not in kwargs
             and ATTR_HS_COLOR not in kwargs
@@ -120,6 +143,10 @@ class TuyaLight(TuyaDevice, LightEntity):
 
     def turn_off(self, **kwargs):
         """Instruct the light to turn off."""
+        self._is_on = False
+        self._last_change_is_on = dt.now()
+        logger.debug(self.entity_id + "> turned off")
+
         self._tuya.turn_off()
 
     @property
