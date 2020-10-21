@@ -3,7 +3,7 @@ import asyncio
 from uuid import UUID
 
 from simplipy import API
-from simplipy.errors import InvalidCredentialsError, SimplipyError
+from simplipy.errors import EndpointUnavailable, InvalidCredentialsError, SimplipyError
 from simplipy.websocket import (
     EVENT_CAMERA_MOTION_DETECTED,
     EVENT_CONNECTION_LOST,
@@ -16,7 +16,7 @@ from simplipy.websocket import (
 )
 import voluptuous as vol
 
-from homeassistant.config_entries import SOURCE_IMPORT
+from homeassistant.config_entries import SOURCE_IMPORT, SOURCE_REAUTH
 from homeassistant.const import (
     ATTR_CODE,
     CONF_CODE,
@@ -238,7 +238,7 @@ async def async_setup_entry(hass, config_entry):
         return False
     except SimplipyError as err:
         LOGGER.error("Config entry failed: %s", err)
-        raise ConfigEntryNotReady
+        raise ConfigEntryNotReady from err
 
     _async_save_refresh_token(hass, config_entry, api.refresh_token)
 
@@ -365,8 +365,7 @@ async def async_unload_entry(hass, entry):
 
 async def async_update_options(hass, config_entry):
     """Handle an options update."""
-    simplisafe = hass.data[DOMAIN][DATA_CLIENT][config_entry.entry_id]
-    simplisafe.options = config_entry.options
+    await hass.config_entries.async_reload(config_entry.entry_id)
 
 
 class SimpliSafeWebsocket:
@@ -530,17 +529,26 @@ class SimpliSafe:
         for result in results:
             if isinstance(result, InvalidCredentialsError):
                 if self._emergency_refresh_token_used:
-                    LOGGER.error(
-                        "Token disconnected or invalid. Please re-auth the "
-                        "SimpliSafe integration in HASS"
-                    )
-                    self._hass.async_create_task(
-                        self._hass.config_entries.flow.async_init(
-                            DOMAIN,
-                            context={"source": "reauth"},
-                            data=self._config_entry.data,
+                    matching_flows = [
+                        flow
+                        for flow in self._hass.config_entries.flow.async_progress()
+                        if flow["context"].get("source") == SOURCE_REAUTH
+                        and flow["context"].get("unique_id")
+                        == self._config_entry.unique_id
+                    ]
+
+                    if not matching_flows:
+                        self._hass.async_create_task(
+                            self._hass.config_entries.flow.async_init(
+                                DOMAIN,
+                                context={
+                                    "source": SOURCE_REAUTH,
+                                    "unique_id": self._config_entry.unique_id,
+                                },
+                                data=self._config_entry.data,
+                            )
                         )
-                    )
+
                     return
 
                 LOGGER.warning("SimpliSafe cloud error; trying stored refresh token")
@@ -555,11 +563,18 @@ class SimpliSafe:
                     LOGGER.error("Error while using stored refresh token: %s", err)
                     return
 
+            if isinstance(result, EndpointUnavailable):
+                # In case the user attempt an action not allowed in their current plan,
+                # we merely log that message at INFO level (so the user is aware,
+                # but not spammed with ERROR messages that they cannot change):
+                LOGGER.info(result)
+                return
+
             if isinstance(result, SimplipyError):
                 LOGGER.error("SimpliSafe error while updating: %s", result)
                 return
 
-            if isinstance(result, Exception):  # pylint: disable=broad-except
+            if isinstance(result, Exception):
                 LOGGER.error("Unknown error while updating: %s", result)
                 return
 

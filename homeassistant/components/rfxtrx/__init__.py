@@ -18,11 +18,19 @@ from homeassistant.const import (
     CONF_DEVICES,
     CONF_HOST,
     CONF_PORT,
+    DEGREE,
+    ELECTRICAL_CURRENT_AMPERE,
+    ENERGY_KILO_WATT_HOUR,
     EVENT_HOMEASSISTANT_STOP,
+    LENGTH_MILLIMETERS,
+    PERCENTAGE,
     POWER_WATT,
+    PRESSURE_HPA,
+    SPEED_METERS_PER_SECOND,
     TEMP_CELSIUS,
-    UNIT_PERCENTAGE,
+    TIME_HOURS,
     UV_INDEX,
+    VOLT,
 )
 from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
@@ -51,32 +59,30 @@ DATA_TYPES = OrderedDict(
     [
         ("Temperature", TEMP_CELSIUS),
         ("Temperature2", TEMP_CELSIUS),
-        ("Humidity", UNIT_PERCENTAGE),
-        ("Barometer", ""),
-        ("Wind direction", ""),
-        ("Rain rate", ""),
+        ("Humidity", PERCENTAGE),
+        ("Barometer", PRESSURE_HPA),
+        ("Wind direction", DEGREE),
+        ("Rain rate", f"{LENGTH_MILLIMETERS}/{TIME_HOURS}"),
         ("Energy usage", POWER_WATT),
-        ("Total usage", POWER_WATT),
-        ("Sound", ""),
-        ("Sensor Status", ""),
-        ("Counter value", ""),
+        ("Total usage", ENERGY_KILO_WATT_HOUR),
+        ("Sound", None),
+        ("Sensor Status", None),
+        ("Counter value", "count"),
         ("UV", UV_INDEX),
-        ("Humidity status", ""),
-        ("Forecast", ""),
-        ("Forecast numeric", ""),
-        ("Rain total", ""),
-        ("Wind average speed", ""),
-        ("Wind gust", ""),
-        ("Chill", ""),
-        ("Total usage", ""),
-        ("Count", ""),
-        ("Current Ch. 1", ""),
-        ("Current Ch. 2", ""),
-        ("Current Ch. 3", ""),
-        ("Energy usage", ""),
-        ("Voltage", ""),
-        ("Current", ""),
-        ("Battery numeric", UNIT_PERCENTAGE),
+        ("Humidity status", None),
+        ("Forecast", None),
+        ("Forecast numeric", None),
+        ("Rain total", LENGTH_MILLIMETERS),
+        ("Wind average speed", SPEED_METERS_PER_SECOND),
+        ("Wind gust", SPEED_METERS_PER_SECOND),
+        ("Chill", TEMP_CELSIUS),
+        ("Count", "count"),
+        ("Current Ch. 1", ELECTRICAL_CURRENT_AMPERE),
+        ("Current Ch. 2", ELECTRICAL_CURRENT_AMPERE),
+        ("Current Ch. 3", ELECTRICAL_CURRENT_AMPERE),
+        ("Voltage", VOLT),
+        ("Current", ELECTRICAL_CURRENT_AMPERE),
+        ("Battery numeric", PERCENTAGE),
         ("Rssi numeric", "dBm"),
     ]
 )
@@ -90,8 +96,10 @@ def _bytearray_string(data):
     val = cv.string(data)
     try:
         return bytearray.fromhex(val)
-    except ValueError:
-        raise vol.Invalid("Data must be a hex string with multiple of two characters")
+    except ValueError as err:
+        raise vol.Invalid(
+            "Data must be a hex string with multiple of two characters"
+        ) from err
 
 
 def _ensure_device(value):
@@ -154,6 +162,8 @@ async def async_setup(hass, config):
     # Read device_id from the event code add to the data that will end up in the ConfigEntry
     for event_code, event_config in data[CONF_DEVICES].items():
         event = get_rfx_object(event_code)
+        if event is None:
+            continue
         device_id = get_device_id(
             event.device, data_bits=event_config.get(CONF_DATA_BITS)
         )
@@ -161,7 +171,9 @@ async def async_setup(hass, config):
 
     hass.async_create_task(
         hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_IMPORT}, data=data,
+            DOMAIN,
+            context={"source": config_entries.SOURCE_IMPORT},
+            data=data,
         )
     )
     return True
@@ -225,6 +237,8 @@ def _get_device_lookup(devices):
     lookup = dict()
     for event_code, event_config in devices.items():
         event = get_rfx_object(event_code)
+        if event is None:
+            continue
         device_id = get_device_id(
             event.device, data_bits=event_config.get(CONF_DATA_BITS)
         )

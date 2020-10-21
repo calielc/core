@@ -17,9 +17,10 @@ from homeassistant.const import (
     CONF_VALUE_TEMPLATE,
 )
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.reload import setup_reload_service
 
 from . import call_shell_with_timeout, check_output_or_log
-from .const import CONF_COMMAND_TIMEOUT, DEFAULT_TIMEOUT
+from .const import CONF_COMMAND_TIMEOUT, DEFAULT_TIMEOUT, DOMAIN, PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +42,9 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Find and return switches controlled by shell commands."""
+
+    setup_reload_service(hass, DOMAIN, PLATFORMS)
+
     devices = config.get(CONF_SWITCHES, {})
     switches = []
 
@@ -114,7 +118,9 @@ class CommandSwitch(SwitchEntity):
     def _query_state_code(self, command):
         """Execute state command for return code."""
         _LOGGER.info("Running state code command: %s", command)
-        return call_shell_with_timeout(command, self._timeout) == 0
+        return (
+            call_shell_with_timeout(command, self._timeout, log_return_code=False) == 0
+        )
 
     @property
     def should_poll(self):
